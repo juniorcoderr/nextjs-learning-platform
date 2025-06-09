@@ -75,16 +75,44 @@ export const addToSessionHistory = async (companionId: string) => {
 };
 
 export const getRecentSessions = async (limit = 10) => {
+  const { userId } = await auth();
+  if (!userId) return [];
   const supabase = createSupabaseClient();
+
+  // Fetch the most recent unique sessions for the user
   const { data, error } = await supabase
     .from("session_history")
-    .select(`companions:companion_id (*)`)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .select("companion_id, created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
 
-  return data.map(({ companions }) => companions);
+  // Filter to keep only the latest entry for each companion_id
+  const uniqueSessionsMap = new Map();
+  for (const row of data) {
+    if (!uniqueSessionsMap.has(row.companion_id)) {
+      uniqueSessionsMap.set(row.companion_id, row.created_at);
+    }
+  }
+  const uniqueCompanionIds = Array.from(uniqueSessionsMap.keys()).slice(
+    0,
+    limit
+  );
+
+  // Fetch companion details for these unique companion_ids
+  if (uniqueCompanionIds.length === 0) return [];
+
+  const { data: companions, error: companionsError } = await supabase
+    .from("companions")
+    .select("*")
+    .in("id", uniqueCompanionIds);
+
+  if (companionsError) throw new Error(companionsError.message);
+
+  // Sort companions by the order of uniqueCompanionIds (most recent first)
+  const companionsMap = new Map(companions.map((c) => [c.id, c]));
+  return uniqueCompanionIds.map((id) => companionsMap.get(id)).filter(Boolean);
 };
 
 export const getUserSessions = async (userId: string, limit = 10) => {
